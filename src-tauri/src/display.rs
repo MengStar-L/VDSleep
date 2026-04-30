@@ -303,6 +303,9 @@ mod native {
             if monitor.info.id == target.info.id || !monitor.info.active {
                 continue;
             }
+            if monitor.info.monitor_type == "virtual" {
+                continue;
+            }
             let Some(mode) = monitor.mode.as_ref() else {
                 continue;
             };
@@ -311,7 +314,9 @@ mod native {
             }
         }
 
-        apply_pending_changes()
+        detach_active_physical_gdi_displays(&target_mode.device_name, &mut detached)?;
+        apply_pending_changes()?;
+        ensure_only_target_physical_active(&target_mode.device_name)
     }
 
     pub fn restore_layout(snapshot: &DisplayLayoutSnapshot) -> Result<(), String> {
@@ -941,6 +946,68 @@ mod native {
             true,
             &format!("detach display {friendly_name}"),
         )
+    }
+
+    fn detach_active_physical_gdi_displays(
+        target_device_name: &str,
+        detached: &mut HashSet<String>,
+    ) -> Result<(), String> {
+        for display in enumerate_gdi_displays() {
+            if !display.active || display.device_name == target_device_name {
+                continue;
+            }
+            if is_virtual_display(
+                &display.monitor_name,
+                &display.monitor_id,
+                &display.adapter_name,
+            ) {
+                continue;
+            }
+            if detached.insert(display.device_name.clone()) {
+                let friendly = if display.monitor_name.trim().is_empty() {
+                    &display.adapter_name
+                } else {
+                    &display.monitor_name
+                };
+                detach_display(&display.device_name, friendly)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn ensure_only_target_physical_active(target_device_name: &str) -> Result<(), String> {
+        for _ in 0..3 {
+            let mut detached = HashSet::new();
+            detach_active_physical_gdi_displays(target_device_name, &mut detached)?;
+            if detached.is_empty() {
+                return Ok(());
+            }
+            apply_pending_changes()?;
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+
+        let still_active = enumerate_gdi_displays()
+            .into_iter()
+            .filter(|display| display.active && display.device_name != target_device_name)
+            .filter(|display| {
+                !is_virtual_display(
+                    &display.monitor_name,
+                    &display.monitor_id,
+                    &display.adapter_name,
+                )
+            })
+            .map(|display| display.adapter_name)
+            .collect::<Vec<_>>();
+
+        if !still_active.is_empty() {
+            super::log_display_error(&format!(
+                "failed to detach physical displays: {}",
+                still_active.join(", ")
+            ));
+        }
+
+        Ok(())
     }
 
     fn change_display_settings(

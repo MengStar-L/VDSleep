@@ -1,7 +1,9 @@
 mod audio;
 mod config;
 mod display;
+mod keyboard;
 mod monitor;
+mod power;
 
 use audio::AudioController;
 use config::{ConfigManager, DisplayConfig};
@@ -12,6 +14,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -25,6 +28,7 @@ struct AppState {
     display: DisplayController,
     audio: AudioController,
     auto_mute_was_muted: Mutex<bool>,
+    restore_waiting_for_key: AtomicBool,
 }
 
 static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
@@ -40,6 +44,7 @@ static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
         display: DisplayController::new(),
         audio: AudioController::new(),
         auto_mute_was_muted: Mutex::new(false),
+        restore_waiting_for_key: AtomicBool::new(false),
     })
 });
 
@@ -52,12 +57,16 @@ fn get_status() -> serde_json::Value {
         "vdd_installed": state.display.is_vdd_installed(),
         "monitoring": true,
         "baseline_ready": state.display.has_initial_state(),
-        "switched": state.display.is_switched()
+        "switched": state.display.is_switched(),
+        "restore_waiting": state.restore_waiting_for_key.load(Ordering::Relaxed)
     })
 }
 
 #[tauri::command]
 fn restore_display() -> serde_json::Value {
+    APP_STATE
+        .restore_waiting_for_key
+        .store(false, Ordering::Relaxed);
     let success = APP_STATE.display.restore_display();
     json!({"success": success})
 }
@@ -80,9 +89,14 @@ fn get_monitors() -> serde_json::Value {
         "target_id": config.target_id,
         "auto_switch": config.auto_switch,
         "auto_mute": config.auto_mute,
+        "enhanced_mode": config.enhanced_mode,
+        "restore_key_scan_code": config.restore_key_scan_code,
+        "restore_key_label": config.restore_key_label,
+        "auto_restore_on_resume": config.auto_restore_on_resume,
         "vdd_installed": state.display.is_vdd_installed(),
         "baseline_ready": state.display.has_initial_state(),
-        "switched": state.display.is_switched()
+        "switched": state.display.is_switched(),
+        "restore_waiting": state.restore_waiting_for_key.load(Ordering::Relaxed)
     })
 }
 
@@ -107,10 +121,27 @@ fn set_display_settings(data: serde_json::Value) -> serde_json::Value {
     if let Some(v) = data["auto_mute"].as_bool() {
         config.auto_mute = v;
     }
+    if let Some(v) = data["enhanced_mode"].as_bool() {
+        config.enhanced_mode = v;
+    }
+    if let Some(v) = data["restore_key_scan_code"].as_u64() {
+        config.restore_key_scan_code = v.min(u32::MAX as u64) as u32;
+    }
+    if let Some(v) = data["restore_key_label"].as_str() {
+        config.restore_key_label = v.to_string();
+    }
+    if let Some(v) = data["auto_restore_on_resume"].as_bool() {
+        config.auto_restore_on_resume = v;
+    }
 
     let cloned = config.clone();
     drop(config);
     state.config.save_display_config(&cloned);
+    keyboard::configure(cloned.enhanced_mode, cloned.restore_key_scan_code);
+
+    if !cloned.enhanced_mode && state.restore_waiting_for_key.swap(false, Ordering::Relaxed) {
+        let _ = state.display.restore_display();
+    }
 
     if !state.monitor.is_connected() {
         let _ = state.display.capture_initial_state_if_needed();
@@ -148,6 +179,15 @@ fn hide_to_tray(app: tauri::AppHandle) -> serde_json::Value {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = APP_STATE.clone();
+    let keyboard_state = APP_STATE.clone();
+    keyboard::start(move || complete_deferred_restore(&keyboard_state));
+    let power_state = APP_STATE.clone();
+    power::start(move || handle_system_resume(&power_state));
+    {
+        let config = state.config.display_config.lock().clone();
+        keyboard::configure(config.enhanced_mode, config.restore_key_scan_code);
+    }
+
     let initial_connected = state.monitor.refresh_now();
     if !initial_connected {
         let _ = state.display.capture_initial_state();
@@ -205,6 +245,9 @@ pub fn run() {
             },
             tauri::RunEvent::ExitRequested { api, .. } => {
                 api.prevent_exit();
+            }
+            tauri::RunEvent::Resumed => {
+                handle_system_resume(&APP_STATE);
             }
             _ => {}
         });
@@ -339,12 +382,56 @@ fn handle_auto_mute(state: &AppState, connected: bool) {
 
 fn handle_display_switch(state: &AppState, connected: bool, config: &DisplayConfig) {
     if connected {
+        state
+            .restore_waiting_for_key
+            .store(false, Ordering::Relaxed);
         if config.target_id.trim().is_empty() || !state.display.has_initial_state() {
             return;
         }
 
         let _ = state.display.switch_to_display(&config.target_id);
     } else if state.display.is_switched() {
-        let _ = state.display.restore_display();
+        if config.enhanced_mode && config.restore_key_scan_code != 0 {
+            state.restore_waiting_for_key.store(true, Ordering::Relaxed);
+        } else {
+            state
+                .restore_waiting_for_key
+                .store(false, Ordering::Relaxed);
+            let _ = state.display.restore_display();
+        }
+    } else {
+        state
+            .restore_waiting_for_key
+            .store(false, Ordering::Relaxed);
     }
+}
+
+fn complete_deferred_restore(state: &AppState) {
+    let was_waiting = state.restore_waiting_for_key.swap(false, Ordering::Relaxed);
+    if !state.display.is_switched() {
+        return;
+    }
+
+    if !state.display.restore_display() && was_waiting {
+        state.restore_waiting_for_key.store(true, Ordering::Relaxed);
+    }
+}
+
+fn handle_system_resume(state: &AppState) {
+    let config = state.config.display_config.lock().clone();
+    if !config.auto_restore_on_resume {
+        return;
+    }
+
+    let state = APP_STATE.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        state
+            .restore_waiting_for_key
+            .store(false, Ordering::Relaxed);
+        if state.display.is_switched() {
+            let _ = state.display.restore_display();
+        }
+        let _ = state.monitor.refresh_now();
+    });
 }

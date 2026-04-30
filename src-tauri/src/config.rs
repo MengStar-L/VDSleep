@@ -23,10 +23,15 @@ impl Default for WindowConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DisplayConfig {
     pub auto_switch: bool,
     pub target_id: String,
     pub auto_mute: bool,
+    pub enhanced_mode: bool,
+    pub restore_key_scan_code: u32,
+    pub restore_key_label: String,
+    pub auto_restore_on_resume: bool,
 }
 
 impl Default for DisplayConfig {
@@ -35,6 +40,10 @@ impl Default for DisplayConfig {
             auto_switch: true,
             target_id: String::new(),
             auto_mute: false,
+            enhanced_mode: false,
+            restore_key_scan_code: 0,
+            restore_key_label: String::new(),
+            auto_restore_on_resume: true,
         }
     }
 }

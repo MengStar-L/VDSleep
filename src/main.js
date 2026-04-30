@@ -15,7 +15,13 @@ const state = {
     activeDisplayId: '',
     targetDisplayId: '',
     autoSwitch: true,
-    autoMute: false
+    autoMute: false,
+    enhancedMode: false,
+    restoreKeyScanCode: 0,
+    restoreKeyLabel: '',
+    autoRestoreOnResume: true,
+    restoreWaiting: false,
+    recordingKey: false
 };
 
 const elements = {};
@@ -44,6 +50,10 @@ function cacheDom() {
     elements.btnHideToTray = document.getElementById('btn-hide-to-tray');
     elements.autoSwitchDisplay = document.getElementById('auto-switch-display');
     elements.autoMuteDisconnect = document.getElementById('auto-mute-disconnect');
+    elements.enhancedMode = document.getElementById('enhanced-mode');
+    elements.restoreKeyRecord = document.getElementById('restore-key-record');
+    elements.restoreKeyLabel = document.getElementById('restore-key-label');
+    elements.autoRestoreOnResume = document.getElementById('auto-restore-on-resume');
     elements.targetDisplay = document.getElementById('target-display');
     elements.targetWrapper = document.getElementById('target-display-wrapper');
     elements.targetTrigger = document.getElementById('target-display-trigger');
@@ -118,7 +128,10 @@ function updateStatusCards() {
         elements.vddWarning.hidden = false;
     }
 
-    if (state.switched) {
+    if (state.restoreWaiting) {
+        elements.displayStatusText.textContent = '等待手动按键恢复';
+        elements.displayIndicator.className = 'status-indicator warning';
+    } else if (state.switched) {
         elements.displayStatusText.textContent = '已切换到目标屏幕';
         elements.displayIndicator.className = 'status-indicator warning';
     } else if (state.baselineReady) {
@@ -138,6 +151,12 @@ function updateStatusCards() {
 function updateSettingsUi() {
     elements.autoSwitchDisplay.checked = state.autoSwitch;
     elements.autoMuteDisconnect.checked = state.autoMute;
+    elements.enhancedMode.checked = state.enhancedMode;
+    elements.autoRestoreOnResume.checked = state.autoRestoreOnResume;
+    elements.restoreKeyLabel.textContent = state.recordingKey
+        ? '请按一个键...'
+        : (state.restoreKeyLabel || '未设置');
+    elements.restoreKeyRecord.classList.toggle('recording', state.recordingKey);
     updateMuteButton();
     updateCurrentDisplay();
     updateCustomSelect();
@@ -197,6 +216,7 @@ async function fetchStatus() {
     state.monitoring = data.monitoring || false;
     state.baselineReady = data.baseline_ready || false;
     state.switched = data.switched || false;
+    state.restoreWaiting = data.restore_waiting === true;
     updateStatusCards();
 }
 
@@ -213,6 +233,11 @@ async function loadMonitors() {
     state.targetDisplayId = data.target_id || '';
     state.autoSwitch = data.auto_switch !== false;
     state.autoMute = data.auto_mute === true;
+    state.enhancedMode = data.enhanced_mode === true;
+    state.restoreKeyScanCode = Number(data.restore_key_scan_code || 0);
+    state.restoreKeyLabel = data.restore_key_label || '';
+    state.autoRestoreOnResume = data.auto_restore_on_resume !== false;
+    state.restoreWaiting = data.restore_waiting === true;
     state.vddInstalled = data.vdd_installed || state.vddInstalled;
     state.baselineReady = data.baseline_ready || state.baselineReady;
     state.switched = data.switched || false;
@@ -258,6 +283,8 @@ function scheduleMonitorRefresh(delay = MONITOR_SETTLE_REFRESH_MS) {
 async function saveDisplaySettings() {
     state.autoSwitch = elements.autoSwitchDisplay.checked;
     state.autoMute = elements.autoMuteDisconnect.checked;
+    state.enhancedMode = elements.enhancedMode.checked;
+    state.autoRestoreOnResume = elements.autoRestoreOnResume.checked;
     state.targetDisplayId = elements.targetDisplay.value;
 
     try {
@@ -265,7 +292,11 @@ async function saveDisplaySettings() {
             data: {
                 auto_switch: state.autoSwitch,
                 auto_mute: state.autoMute,
-                target_id: state.targetDisplayId
+                target_id: state.targetDisplayId,
+                enhanced_mode: state.enhancedMode,
+                restore_key_scan_code: state.restoreKeyScanCode,
+                restore_key_label: state.restoreKeyLabel,
+                auto_restore_on_resume: state.autoRestoreOnResume
             }
         });
         await refreshAll({ includeMonitors: true });
@@ -311,13 +342,200 @@ async function hideToTray() {
     }
 }
 
+const PHYSICAL_SCAN_CODES = {
+    Escape: 0x01,
+    Digit1: 0x02,
+    Digit2: 0x03,
+    Digit3: 0x04,
+    Digit4: 0x05,
+    Digit5: 0x06,
+    Digit6: 0x07,
+    Digit7: 0x08,
+    Digit8: 0x09,
+    Digit9: 0x0A,
+    Digit0: 0x0B,
+    Minus: 0x0C,
+    Equal: 0x0D,
+    Backspace: 0x0E,
+    Tab: 0x0F,
+    KeyQ: 0x10,
+    KeyW: 0x11,
+    KeyE: 0x12,
+    KeyR: 0x13,
+    KeyT: 0x14,
+    KeyY: 0x15,
+    KeyU: 0x16,
+    KeyI: 0x17,
+    KeyO: 0x18,
+    KeyP: 0x19,
+    BracketLeft: 0x1A,
+    BracketRight: 0x1B,
+    Enter: 0x1C,
+    ControlLeft: 0x1D,
+    KeyA: 0x1E,
+    KeyS: 0x1F,
+    KeyD: 0x20,
+    KeyF: 0x21,
+    KeyG: 0x22,
+    KeyH: 0x23,
+    KeyJ: 0x24,
+    KeyK: 0x25,
+    KeyL: 0x26,
+    Semicolon: 0x27,
+    Quote: 0x28,
+    Backquote: 0x29,
+    ShiftLeft: 0x2A,
+    Backslash: 0x2B,
+    KeyZ: 0x2C,
+    KeyX: 0x2D,
+    KeyC: 0x2E,
+    KeyV: 0x2F,
+    KeyB: 0x30,
+    KeyN: 0x31,
+    KeyM: 0x32,
+    Comma: 0x33,
+    Period: 0x34,
+    Slash: 0x35,
+    ShiftRight: 0x36,
+    NumpadMultiply: 0x37,
+    AltLeft: 0x38,
+    Space: 0x39,
+    CapsLock: 0x3A,
+    F1: 0x3B,
+    F2: 0x3C,
+    F3: 0x3D,
+    F4: 0x3E,
+    F5: 0x3F,
+    F6: 0x40,
+    F7: 0x41,
+    F8: 0x42,
+    F9: 0x43,
+    F10: 0x44,
+    NumLock: 0x45,
+    ScrollLock: 0x46,
+    Numpad7: 0x47,
+    Numpad8: 0x48,
+    Numpad9: 0x49,
+    NumpadSubtract: 0x4A,
+    Numpad4: 0x4B,
+    Numpad5: 0x4C,
+    Numpad6: 0x4D,
+    NumpadAdd: 0x4E,
+    Numpad1: 0x4F,
+    Numpad2: 0x50,
+    Numpad3: 0x51,
+    Numpad0: 0x52,
+    NumpadDecimal: 0x53,
+    F11: 0x57,
+    F12: 0x58,
+    NumpadEnter: 0xE01C,
+    ControlRight: 0xE01D,
+    NumpadDivide: 0xE035,
+    PrintScreen: 0xE037,
+    AltRight: 0xE038,
+    Home: 0xE047,
+    ArrowUp: 0xE048,
+    PageUp: 0xE049,
+    ArrowLeft: 0xE04B,
+    ArrowRight: 0xE04D,
+    End: 0xE04F,
+    ArrowDown: 0xE050,
+    PageDown: 0xE051,
+    Insert: 0xE052,
+    Delete: 0xE053,
+    MetaLeft: 0xE05B,
+    MetaRight: 0xE05C,
+    ContextMenu: 0xE05D
+};
+
+const KEY_LABELS = {
+    Escape: 'Esc',
+    Backspace: 'Backspace',
+    Tab: 'Tab',
+    Enter: 'Enter',
+    Space: '空格',
+    CapsLock: 'Caps Lock',
+    ShiftLeft: '左 Shift',
+    ShiftRight: '右 Shift',
+    ControlLeft: '左 Ctrl',
+    ControlRight: '右 Ctrl',
+    AltLeft: '左 Alt',
+    AltRight: '右 Alt',
+    MetaLeft: '左 Win',
+    MetaRight: '右 Win',
+    ContextMenu: '菜单键',
+    ArrowUp: '方向上',
+    ArrowDown: '方向下',
+    ArrowLeft: '方向左',
+    ArrowRight: '方向右'
+};
+
+function keyLabelFromCode(code) {
+    if (KEY_LABELS[code]) return KEY_LABELS[code];
+    if (code.startsWith('Key')) return code.slice(3);
+    if (code.startsWith('Digit')) return code.slice(5);
+    if (code.startsWith('Numpad')) return `Numpad ${code.slice(6)}`;
+    return code.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+function beginKeyRecording() {
+    state.recordingKey = true;
+    updateSettingsUi();
+}
+
+async function recordRestoreKey(event) {
+    if (!state.recordingKey) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+
+    const scanCode = PHYSICAL_SCAN_CODES[event.code];
+    if (!scanCode) {
+        elements.restoreKeyLabel.textContent = '不支持该键';
+        setTimeout(updateSettingsUi, 800);
+        return;
+    }
+
+    state.restoreKeyScanCode = scanCode;
+    state.restoreKeyLabel = keyLabelFromCode(event.code);
+    state.recordingKey = false;
+    updateSettingsUi();
+    await saveDisplaySettings();
+}
+
+async function restoreFromFocusedShortcut(event) {
+    if (state.recordingKey || event.repeat || !state.enhancedMode || !state.restoreKeyScanCode) {
+        return;
+    }
+
+    const scanCode = PHYSICAL_SCAN_CODES[event.code];
+    if (scanCode !== state.restoreKeyScanCode) {
+        return;
+    }
+
+    event.preventDefault();
+    try {
+        await invoke('restore_display');
+        await refreshAll({ includeMonitors: true });
+        scheduleMonitorRefresh();
+    } catch (error) {
+        console.error('[VDSleep] 快捷键恢复屏幕失败:', error);
+    }
+}
+
 function bindEvents() {
     elements.btnRestoreDisplay.addEventListener('click', restoreDisplay);
     elements.btnToggleMute.addEventListener('click', toggleMute);
     elements.btnHideToTray.addEventListener('click', hideToTray);
     elements.autoSwitchDisplay.addEventListener('change', saveDisplaySettings);
     elements.autoMuteDisconnect.addEventListener('change', saveDisplaySettings);
+    elements.enhancedMode.addEventListener('change', saveDisplaySettings);
+    elements.autoRestoreOnResume.addEventListener('change', saveDisplaySettings);
+    elements.restoreKeyRecord.addEventListener('click', beginKeyRecording);
     elements.targetDisplay.addEventListener('change', saveDisplaySettings);
+    document.addEventListener('keydown', recordRestoreKey, true);
+    document.addEventListener('keydown', restoreFromFocusedShortcut, true);
 
     elements.targetTrigger.addEventListener('click', (event) => {
         event.stopPropagation();
