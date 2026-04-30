@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>VDSleep - 隐私屏幕管理</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="startup-overlay" id="startup-overlay">
+        <div class="startup-logo">VD</div>
+        <h1 class="startup-title">VDSleep</h1>
+        <div class="startup-progress">
+            <div class="startup-steps">
+                <div class="startup-step waiting" id="step-ui">
+                    <span class="startup-step-icon"></span>
+                    <span>初始化界面组件</span>
+                </div>
+                <div class="startup-step waiting" id="step-status">
+                    <span class="startup-step-icon"></span>
+                    <span>检测系统状态</span>
+                </div>
+                <div class="startup-step waiting" id="step-monitors">
+                    <span class="startup-step-icon"></span>
+                    <span>检测显示器列表</span>
+                </div>
+            </div>
+            <div class="startup-status" id="startup-status">
+                <div class="startup-spinner"></div>
+                <span>正在启动...</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <div class="drag-bar"></div>
+        <div class="main-content">
+            <section class="panel">
+                <h2 class="panel-title">状态监控</h2>
+                <div class="status-cards">
+                    <article class="status-card">
+                        <div class="status-icon">VD</div>
+                        <div class="status-info">
+                            <h3>VD Streamer</h3>
+                            <p id="vd-status-text">检测中...</p>
+                        </div>
+                        <div class="status-indicator" id="vd-indicator"></div>
+                    </article>
+
+                    <article class="status-card">
+                        <div class="status-icon">VR</div>
+                        <div class="status-info">
+                            <h3>VR 设备连接</h3>
+                            <p id="vr-status-text">检测中...</p>
+                        </div>
+                        <div class="status-indicator" id="vr-indicator"></div>
+                    </article>
+
+                    <article class="status-card" id="vdd-card">
+                        <div class="status-icon">VDD</div>
+                        <div class="status-info">
+                            <h3>虚拟显示驱动</h3>
+                            <p id="vdd-status-text">检测中...</p>
+                        </div>
+                        <div class="vdd-warning" id="vdd-warning" hidden>
+                            <span class="warning-text">请先安装 VDD 驱动</span>
+                            <a href="https://github.com/itsmikethetech/Virtual-Display-Driver" target="_blank"
+                                rel="noreferrer" class="download-link">下载地址</a>
+                        </div>
+                        <div class="status-indicator" id="vdd-indicator"></div>
+                    </article>
+
+                    <article class="status-card">
+                        <div class="status-icon">DS</div>
+                        <div class="status-info">
+                            <h3>物理屏幕</h3>
+                            <p id="display-status-text">检测中...</p>
+                        </div>
+                        <div class="status-indicator" id="display-indicator"></div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2 class="panel-title">控制与设置</h2>
+
+                <div class="action-buttons">
+                    <button class="btn btn-action" id="btn-restore-display" type="button">
+                        <span class="btn-icon">DS</span>
+                        <span class="btn-text">强制恢复屏幕</span>
+                    </button>
+                    <button class="btn btn-action" id="btn-toggle-mute" type="button">
+                        <span class="btn-icon">AU</span>
+                        <span class="btn-text">静音</span>
+                    </button>
+                    <button class="btn btn-action" id="btn-hide-to-tray" type="button">
+                        <span class="btn-icon">TR</span>
+                        <span class="btn-text">隐藏到托盘</span>
+                    </button>
+                </div>
+
+                <div class="settings-card">
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <span class="setting-text">自动切换显示器</span>
+                            <span class="setting-desc">VR 连接时自动切换</span>
+                        </label>
+                        <label class="switch">
+                            <input type="checkbox" id="auto-switch-display">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <span class="setting-text">断开时自动静音</span>
+                            <span class="setting-desc">VR 断开时静音电脑</span>
+                        </label>
+                        <label class="switch">
+                            <input type="checkbox" id="auto-mute-disconnect">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <span class="setting-text">目标显示器</span>
+                            <span class="setting-desc">VR 连接时使用</span>
+                        </label>
+                        <div class="custom-select" id="target-display-wrapper">
+                            <button class="custom-select-trigger" id="target-display-trigger" type="button">
+                                <span class="custom-select-value">自动选择</span>
+                                <svg class="custom-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                            <div class="custom-select-options" id="target-display-options">
+                                <button class="custom-select-option selected" type="button" data-value="">自动选择</button>
+                            </div>
+                        </div>
+                        <select id="target-display" class="select" hidden>
+                            <option value="">自动选择</option>
+                        </select>
+                    </div>
+
+                    <div class="setting-item info-item">
+                        <label class="setting-label">
+                            <span class="setting-text">当前显示器</span>
+                            <span class="setting-desc" id="current-display-info">检测中...</span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item info-item">
+                        <label class="setting-label">
+                            <span class="setting-text">原始布局</span>
+                            <span class="setting-desc" id="baseline-info">等待检测...</span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+
+</html>
