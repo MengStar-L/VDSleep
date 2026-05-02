@@ -50,6 +50,7 @@ function cacheDom() {
     elements.btnHideToTray = document.getElementById('btn-hide-to-tray');
     elements.autoSwitchDisplay = document.getElementById('auto-switch-display');
     elements.autoMuteDisconnect = document.getElementById('auto-mute-disconnect');
+    elements.autoMuteSetting = elements.autoMuteDisconnect.closest('.setting-item');
     elements.enhancedMode = document.getElementById('enhanced-mode');
     elements.restoreKeyRecord = document.getElementById('restore-key-record');
     elements.restoreKeyLabel = document.getElementById('restore-key-label');
@@ -151,6 +152,10 @@ function updateStatusCards() {
 function updateSettingsUi() {
     elements.autoSwitchDisplay.checked = state.autoSwitch;
     elements.autoMuteDisconnect.checked = state.autoMute;
+    const autoMuteText = elements.autoMuteSetting?.querySelector('.setting-text');
+    const autoMuteDesc = elements.autoMuteSetting?.querySelector('.setting-desc');
+    if (autoMuteText) autoMuteText.textContent = '连接时音量归零';
+    if (autoMuteDesc) autoMuteDesc.textContent = '检测到 VR 已连接后，立即将所有播放设备音量设为 0';
     elements.enhancedMode.checked = state.enhancedMode;
     elements.autoRestoreOnResume.checked = state.autoRestoreOnResume;
     elements.restoreKeyLabel.textContent = state.recordingKey

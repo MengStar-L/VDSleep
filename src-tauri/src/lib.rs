@@ -13,6 +13,7 @@ use monitor::VdMonitor;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::json;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -27,7 +28,7 @@ struct AppState {
     monitor: VdMonitor,
     display: DisplayController,
     audio: AudioController,
-    auto_mute_was_muted: Mutex<bool>,
+    auto_zero_volume_device_ids: Mutex<HashSet<String>>,
     restore_waiting_for_key: AtomicBool,
 }
 
@@ -43,7 +44,7 @@ static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
         monitor: VdMonitor::new(),
         display: DisplayController::new(),
         audio: AudioController::new(),
-        auto_mute_was_muted: Mutex::new(false),
+        auto_zero_volume_device_ids: Mutex::new(HashSet::new()),
         restore_waiting_for_key: AtomicBool::new(false),
     })
 });
@@ -147,6 +148,12 @@ fn set_display_settings(data: serde_json::Value) -> serde_json::Value {
         let _ = state.display.capture_initial_state_if_needed();
     }
 
+    if cloned.auto_mute && state.monitor.is_connected() {
+        handle_auto_mute(&state, true);
+    } else if !cloned.auto_mute {
+        state.auto_zero_volume_device_ids.lock().clear();
+    }
+
     json!({"success": true})
 }
 
@@ -191,6 +198,9 @@ pub fn run() {
     let initial_connected = state.monitor.refresh_now();
     if !initial_connected {
         let _ = state.display.capture_initial_state();
+    }
+    if initial_connected && state.config.display_config.lock().auto_mute {
+        handle_auto_mute(&state, true);
     }
 
     let closure_state = APP_STATE.clone();
@@ -371,12 +381,11 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn handle_auto_mute(state: &AppState, connected: bool) {
-    if !connected {
-        state.audio.set_mute(true);
-        *state.auto_mute_was_muted.lock() = true;
-    } else if *state.auto_mute_was_muted.lock() {
-        state.audio.set_mute(false);
-        *state.auto_mute_was_muted.lock() = false;
+    if connected {
+        let mut protected_ids = state.auto_zero_volume_device_ids.lock();
+        let _ = state.audio.zero_unprotected_render_devices(&mut protected_ids);
+    } else {
+        state.auto_zero_volume_device_ids.lock().clear();
     }
 }
 
